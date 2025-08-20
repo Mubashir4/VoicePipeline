@@ -1,0 +1,5 @@
+
+# Google Cloud Credentials
+backend/.env
+backend/credentials/
+*.json

@@ -1,0 +1,119 @@
+.App {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+}
+
+.App-header {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 20px 0;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logo-section {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.logo-icon {
+  font-size: 2.5rem;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(2px 2px 4px rgba(0,0,0,0.1));
+}
+
+.header-text h1 {
+  margin: 0;
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: #2d3748;
+  letter-spacing: -0.5px;
+}
+
+.header-text p {
+  margin: 5px 0 0 0;
+  font-size: 1rem;
+  color: #718096;
+  font-weight: 500;
+}
+
+.tech-badge {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  color: white;
+  padding: 8px 14px;
+  border-radius: 22px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all 0.3s ease;
+}
+
+.badge.primary {
+  background: linear-gradient(135deg, #4299e1, #3182ce);
+  box-shadow: 0 3px 12px rgba(66, 153, 225, 0.35);
+}
+
+.badge.secondary {
+  background: linear-gradient(135deg, #48bb78, #38a169);
+  box-shadow: 0 3px 12px rgba(72, 187, 120, 0.35);
+}
+
+.badge.accent {
+  background: linear-gradient(135deg, #ed8936, #dd6b20);
+  box-shadow: 0 3px 12px rgba(237, 137, 54, 0.35);
+}
+
+.badge:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+}
+
+.main-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 30px 20px;
+}
+
+@media (max-width: 768px) {
+  .header-content {
+    flex-direction: column;
+    gap: 15px;
+    text-align: center;
+  }
+  
+  .logo-section {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .header-text h1 {
+    font-size: 1.8rem;
+  }
+  
+  .tech-badge {
+    justify-content: center;
+  }
+}
