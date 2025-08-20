@@ -24,6 +24,81 @@ interface TranscriptEntry {
   timestamp: number;
 }
 
+// Automatic model selection based on language capabilities
+const getOptimalModelForLanguage = (languageCode: string) => {
+  // Premium languages with full enhanced model support
+  const premiumLanguages = [
+    'en-US', 'en-GB', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 
+    'pt-BR', 'ru-RU', 'ja-JP', 'ko-KR'
+  ];
+  
+  // Standard languages with command_and_search support
+  const standardLanguages = [
+    'es-MX', 'pt-PT', 'zh-CN', 'hi-IN', 'tr-TR', 'nl-NL', 
+    'sv-SE', 'da-DK', 'fi-FI', 'nb-NO', 'nn-NO'
+  ];
+  
+  // Basic languages with limited support
+  const basicLanguages = [
+    'ur-PK', 'ur-IN', 'ar-SA', 'ar-AE'
+  ];
+  
+  if (premiumLanguages.includes(languageCode)) {
+    return {
+      model: 'latest_long',
+      name: 'Enhanced',
+      description: 'Premium model with all features',
+      features: {
+        automaticPunctuation: true,
+        speakerDiarization: true,
+        wordTimeOffsets: true,
+        profanityFilter: true,
+        useEnhanced: true
+      }
+    };
+  } else if (standardLanguages.includes(languageCode)) {
+    return {
+      model: 'command_and_search',
+      name: 'Standard',
+      description: 'Standard model with basic features',
+      features: {
+        automaticPunctuation: false,
+        speakerDiarization: false,
+        wordTimeOffsets: true,
+        profanityFilter: true,
+        useEnhanced: false
+      }
+    };
+  } else if (basicLanguages.includes(languageCode)) {
+    return {
+      model: 'default',
+      name: 'Basic',
+      description: 'Basic model for limited languages',
+      features: {
+        automaticPunctuation: false,
+        speakerDiarization: false,
+        wordTimeOffsets: true,
+        profanityFilter: false,
+        useEnhanced: false
+      }
+    };
+  } else {
+    // Fallback for unknown languages
+    return {
+      model: 'default',
+      name: 'Default',
+      description: 'Fallback model',
+      features: {
+        automaticPunctuation: false,
+        speakerDiarization: false,
+        wordTimeOffsets: true,
+        profanityFilter: true,
+        useEnhanced: false
+      }
+    };
+  }
+};
+
 // Language options with Google Cloud Speech-to-Text language codes
 const LANGUAGES = [
   { code: 'en-US', name: 'English (US)', flag: '🇺🇸', rtl: false },
@@ -89,28 +164,27 @@ const SpeechRecognition: React.FC = () => {
   // Get current language info
   const currentLanguage = LANGUAGES.find(lang => lang.code === selectedLanguage) || LANGUAGES[0];
   
-  // Get model info for current language
-  const getModelInfo = (langCode: string) => {
-    const enhancedLanguages = [
-      'en-US', 'en-GB', 'es-ES', 'es-MX', 'fr-FR', 'de-DE', 
-      'it-IT', 'pt-BR', 'pt-PT', 'ru-RU', 'ja-JP', 'ko-KR'
-    ];
+  // Get optimal model and features for current language
+  const optimalConfig = getOptimalModelForLanguage(selectedLanguage);
+  
+  // Get model display info for UI
+  const getModelDisplayInfo = (langCode: string) => {
+    const config = getOptimalModelForLanguage(langCode);
+    const colorMap = {
+      'Enhanced': '#10b981', // Green for premium
+      'Standard': '#f59e0b', // Orange for standard  
+      'Basic': '#6b7280',    // Gray for basic
+      'Default': '#6b7280'   // Gray for fallback
+    };
     
-    const basicModelLanguages = [
-      'ur-PK', 'ur-IN', 'ar-SA', 'ar-AE', 'hi-IN', 'tr-TR',
-      'nb-NO', 'nn-NO', 'sv-SE', 'da-DK', 'fi-FI', 'nl-NL', 'zh-CN'
-    ];
-    
-    if (enhancedLanguages.includes(langCode)) {
-      return { model: 'Enhanced', quality: 'high', color: '#48bb78' };
-    } else if (basicModelLanguages.includes(langCode)) {
-      return { model: 'Standard', quality: 'good', color: '#ed8936' };
-    } else {
-      return { model: 'Basic', quality: 'standard', color: '#a0aec0' };
-    }
+    return {
+      name: config.name,
+      description: config.description,
+      color: colorMap[config.name as keyof typeof colorMap] || '#6b7280'
+    };
   };
   
-  const modelInfo = getModelInfo(selectedLanguage);
+  const modelDisplayInfo = getModelDisplayInfo(selectedLanguage);
 
   // Format time helper
   const formatTime = (timestamp: number) => {
@@ -253,11 +327,15 @@ const SpeechRecognition: React.FC = () => {
         }
       };
 
-      // Start recognition on backend
+      // Start recognition on backend with optimal configuration
       socketRef.current?.emit('startRecognition', {
         minSpeakerCount: minSpeakers,
         maxSpeakerCount: maxSpeakers,
-        languageCode: selectedLanguage
+        languageCode: selectedLanguage,
+        model: optimalConfig.model,
+        enableAutomaticPunctuation: optimalConfig.features.automaticPunctuation,
+        enableSpeakerDiarization: optimalConfig.features.speakerDiarization,
+        useEnhanced: optimalConfig.features.useEnhanced
       });
 
       // Start recording
@@ -321,12 +399,10 @@ const SpeechRecognition: React.FC = () => {
   return (
     <div className="speech-recognition">
       {/* Control Panel */}
-      <div className="control-panel">
-        <h3>Controls</h3>
-        
+      <div className="control-panel">        
         {/* Language Selection */}
         <div className="language-config">
-          <h4>Language Selection</h4>
+          <h4>Language</h4>
           <div className="language-selector">
             <div className="custom-dropdown" ref={dropdownRef}>
               <button
@@ -337,8 +413,8 @@ const SpeechRecognition: React.FC = () => {
                 <span className="selected-language">
                   <span className="language-flag">{currentLanguage.flag}</span>
                   <span className="language-name">{currentLanguage.name}</span>
-                  <span className="model-indicator" style={{ backgroundColor: modelInfo.color }}>
-                    {modelInfo.model}
+                  <span className="model-indicator" style={{ backgroundColor: modelDisplayInfo.color }}>
+                    {modelDisplayInfo.name}
                   </span>
                   {currentLanguage.rtl && <span className="rtl-indicator">RTL</span>}
                 </span>
@@ -360,7 +436,7 @@ const SpeechRecognition: React.FC = () => {
                   <div className="language-options">
                     {filteredLanguages.length > 0 ? (
                       filteredLanguages.map((lang) => {
-                        const langModelInfo = getModelInfo(lang.code);
+                        const langModelInfo = getModelDisplayInfo(lang.code);
                         return (
                           <button
                             key={lang.code}
@@ -373,7 +449,7 @@ const SpeechRecognition: React.FC = () => {
                               <span className="language-code">{lang.code}</span>
                             </span>
                             <span className="model-indicator" style={{ backgroundColor: langModelInfo.color }}>
-                              {langModelInfo.model}
+                              {langModelInfo.name}
                             </span>
                             {lang.rtl && <span className="rtl-indicator">RTL</span>}
                           </button>
@@ -391,12 +467,48 @@ const SpeechRecognition: React.FC = () => {
           </div>
         </div>
 
+        {/* Auto-Selected Model Info */}
+        <div className="model-info">
+          <h4>Auto-Selected Model</h4>
+          <div className="model-display">
+            <div className="model-badge" style={{ backgroundColor: modelDisplayInfo.color }}>
+              {modelDisplayInfo.name}
+            </div>
+            <div className="model-description">{modelDisplayInfo.description}</div>
+          </div>
+          
+          {/* Feature info */}
+          <div className="feature-info">
+            <div className="feature-list">
+              <div className={`feature-item ${optimalConfig.features.automaticPunctuation ? 'enabled' : 'disabled'}`}>
+                <span className="feature-icon">{optimalConfig.features.automaticPunctuation ? '✓' : '✗'}</span>
+                <span>Auto Punctuation</span>
+              </div>
+              <div className={`feature-item ${optimalConfig.features.speakerDiarization ? 'enabled' : 'disabled'}`}>
+                <span className="feature-icon">{optimalConfig.features.speakerDiarization ? '✓' : '✗'}</span>
+                <span>Speaker Detection</span>
+              </div>
+            </div>
+          </div>
+          
+          {/* Feature limitation warning */}
+          {(!optimalConfig.features.automaticPunctuation || !optimalConfig.features.speakerDiarization) && (
+            <div className="feature-warning">
+              <span className="warning-icon">⚠️</span>
+              <div className="warning-text">
+                <strong>Limited features for {currentLanguage.name}</strong>
+                <div>Some features not supported by this language model.</div>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Speaker Configuration */}
         <div className="speaker-config">
-          <h4>Speaker Configuration</h4>
+          <h4>Speakers</h4>
           <div className="config-row">
             <div className="config-group">
-              <label>Min Speakers</label>
+              <label>Min</label>
               <input
                 type="number"
                 min="1"
@@ -407,7 +519,7 @@ const SpeechRecognition: React.FC = () => {
               />
             </div>
             <div className="config-group">
-              <label>Max Speakers</label>
+              <label>Max</label>
               <input
                 type="number"
                 min="2"
@@ -429,20 +541,20 @@ const SpeechRecognition: React.FC = () => {
             {isRecording ? (
               <>
                 <span>⏹️</span>
-                Stop Recording
+                Stop
               </>
             ) : (
-              <>
-                <span>🎤</span>
-                Start Recording
-              </>
+                          <>
+              <span>🎤</span>
+              Start
+            </>
             )}
           </button>
 
           {isRecording && (
             <div className="recording-indicator">
               <div className="pulse-dot"></div>
-              Recording with speaker diarization...
+              Recording{optimalConfig.features.speakerDiarization ? ' with speakers' : ''}...
             </div>
           )}
         </div>
@@ -450,7 +562,7 @@ const SpeechRecognition: React.FC = () => {
         {/* Audio Level Visualization */}
         {isRecording && (
           <div className="audio-level">
-            <h4>Audio Level</h4>
+            <h4>Audio</h4>
             <div className="audio-bars">
               {Array.from({ length: 20 }, (_, i) => (
                 <div
@@ -467,7 +579,7 @@ const SpeechRecognition: React.FC = () => {
 
         {/* Session Statistics */}
         <div className="stats-section">
-          <h4>Session Stats</h4>
+          <h4>Stats</h4>
           <div className="stat-item">
             <span className="stat-label">Duration</span>
             <span className="stat-value">{formatDuration(sessionDuration)}</span>
@@ -488,7 +600,7 @@ const SpeechRecognition: React.FC = () => {
       {/* Conversation Panel */}
       <div className="conversation-panel">
         <div className="conversation-header">
-          <h3>Live Conversation</h3>
+          <h3>Conversation</h3>
           <div className="conversation-actions">
             <button className="action-button" onClick={clearTranscripts}>
               Clear
@@ -509,20 +621,20 @@ const SpeechRecognition: React.FC = () => {
           {transcripts.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon">🎙️</div>
-              <h4>Ready to Start</h4>
-              <p>Click "Start Recording" to begin real-time speech recognition with speaker diarization</p>
+              <h4>Ready</h4>
+              <p>Click Start to begin real-time speech recognition</p>
               <div className="empty-state-features">
                 <div className="feature-item">
                   <span className="feature-icon">🌍</span>
-                  <span>25+ Languages Supported</span>
+                  <span>25+ Languages</span>
                 </div>
                 <div className="feature-item">
                   <span className="feature-icon">👥</span>
-                  <span>Multi-Speaker Detection</span>
+                  <span>Speaker Detection</span>
                 </div>
                 <div className="feature-item">
                   <span className="feature-icon">⚡</span>
-                  <span>Real-time Transcription</span>
+                  <span>Real-time</span>
                 </div>
               </div>
             </div>

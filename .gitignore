@@ -3,3 +3,4 @@
 backend/.env
 backend/credentials/
 *.json
+FIXES_APPLIED.md

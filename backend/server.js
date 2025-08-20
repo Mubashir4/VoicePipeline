@@ -28,56 +28,85 @@ io.on('connection', (socket) => {
 
   socket.on('startRecognition', (config) => {
     console.log('Starting recognition for client:', socket.id);
-    console.log('Language:', config.languageCode || 'en-US');
+    console.log('Configuration:', {
+      language: config.languageCode || 'en-US',
+      model: config.model || 'default',
+      autoPunctuation: config.enableAutomaticPunctuation,
+      diarization: config.enableSpeakerDiarization
+    });
     
     const languageCode = config.languageCode || 'en-US';
+    const requestedModel = config.model || 'default';
     
-    // Define model compatibility based on language
-    const getModelForLanguage = (langCode) => {
-      // Languages that support latest_long model with enhanced features
-      const enhancedLanguages = [
-        'en-US', 'en-GB', 'es-ES', 'es-MX', 'fr-FR', 'de-DE', 
-        'it-IT', 'pt-BR', 'pt-PT', 'ru-RU', 'ja-JP', 'ko-KR'
+    // Automatic model selection based on language capabilities (matches frontend logic)
+    const getOptimalModelForLanguage = (langCode) => {
+      const premiumLanguages = [
+        'en-US', 'en-GB', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 
+        'pt-BR', 'ru-RU', 'ja-JP', 'ko-KR'
       ];
       
-      // Languages that need basic model
-      const basicModelLanguages = [
-        'ur-PK', 'ur-IN', 'ar-SA', 'ar-AE', 'hi-IN', 'tr-TR',
-        'nb-NO', 'nn-NO', 'sv-SE', 'da-DK', 'fi-FI', 'nl-NL', 'zh-CN'
+      const standardLanguages = [
+        'es-MX', 'pt-PT', 'zh-CN', 'hi-IN', 'tr-TR', 'nl-NL', 
+        'sv-SE', 'da-DK', 'fi-FI', 'nb-NO', 'nn-NO'
       ];
       
-      if (enhancedLanguages.includes(langCode)) {
+      const basicLanguages = [
+        'ur-PK', 'ur-IN', 'ar-SA', 'ar-AE'
+      ];
+      
+      if (premiumLanguages.includes(langCode)) {
         return { model: 'latest_long', useEnhanced: true };
-      } else if (basicModelLanguages.includes(langCode)) {
-        return { model: 'latest_short', useEnhanced: false };
+      } else if (standardLanguages.includes(langCode)) {
+        return { model: 'command_and_search', useEnhanced: false };
+      } else if (basicLanguages.includes(langCode)) {
+        return { model: 'default', useEnhanced: false };
       } else {
-        // Default fallback
         return { model: 'default', useEnhanced: false };
       }
     };
     
-    const modelConfig = getModelForLanguage(languageCode);
-    console.log('Using model:', modelConfig.model, 'Enhanced:', modelConfig.useEnhanced);
+    // Get optimal configuration for the language
+    const optimalConfig = getOptimalModelForLanguage(languageCode);
     
-    // Google Cloud Speech-to-Text v1 streaming configuration with diarization
+    // Use the optimal model unless a specific model was requested and is valid
+    let finalModel = requestedModel || optimalConfig.model;
+    let useEnhanced = config.useEnhanced !== undefined ? config.useEnhanced : optimalConfig.useEnhanced;
+    
+    // Validate the requested model supports the language
+    if (requestedModel && requestedModel !== optimalConfig.model) {
+      console.log(`Requested model ${requestedModel} may not be optimal for ${languageCode}, using: ${finalModel}`);
+    }
+    
+    console.log('Using model:', finalModel, 'Enhanced:', useEnhanced);
+    
+    // Google Cloud Speech-to-Text v1 streaming configuration
     const speechConfig = {
       encoding: 'WEBM_OPUS',
       sampleRateHertz: 48000,
       languageCode: languageCode,
-      enableAutomaticPunctuation: true,
       enableWordTimeOffsets: true,
-      // Enable speaker diarization (v1)
-      enableSpeakerDiarization: true,
-      minSpeakerCount: config.minSpeakerCount || 2,
-      maxSpeakerCount: config.maxSpeakerCount || 6,
     };
     
-    // Add model and useEnhanced only if not default
-    if (modelConfig.model !== 'default') {
-      speechConfig.model = modelConfig.model;
+    // Add model if not default
+    if (finalModel !== 'default') {
+      speechConfig.model = finalModel;
     }
-    if (modelConfig.useEnhanced) {
+    
+    // Add enhanced features if supported
+    if (useEnhanced) {
       speechConfig.useEnhanced = true;
+    }
+    
+    // Add automatic punctuation if requested and supported
+    if (config.enableAutomaticPunctuation) {
+      speechConfig.enableAutomaticPunctuation = true;
+    }
+    
+    // Add speaker diarization if requested and supported
+    if (config.enableSpeakerDiarization) {
+      speechConfig.enableSpeakerDiarization = true;
+      speechConfig.minSpeakerCount = config.minSpeakerCount || 2;
+      speechConfig.maxSpeakerCount = config.maxSpeakerCount || 6;
     }
     
     const request = {
@@ -91,7 +120,20 @@ io.on('connection', (socket) => {
       .streamingRecognize(request)
       .on('error', (error) => {
         console.error('Speech recognition error:', error);
-        socket.emit('error', { error: error.message });
+        
+        // Provide more specific error messages
+        let errorMessage = error.message;
+        if (error.message.includes('not supported for language')) {
+          errorMessage = `The selected model "${finalModel}" is not supported for ${languageCode}. Please try selecting a different model or use the default model.`;
+        } else if (error.message.includes('Invalid recognition')) {
+          errorMessage = `Configuration error: ${error.message}. This may be due to unsupported features for the selected language.`;
+        } else if (error.message.includes('UNAUTHENTICATED')) {
+          errorMessage = 'Authentication failed. Please check your Google Cloud credentials.';
+        } else if (error.message.includes('PERMISSION_DENIED')) {
+          errorMessage = 'Permission denied. Please check your Google Cloud Speech API permissions.';
+        }
+        
+        socket.emit('error', { error: errorMessage });
       })
       .on('data', (data) => {
         if (data.results[0]) {
