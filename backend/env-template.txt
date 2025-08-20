@@ -1,0 +1,22 @@
+# Google Cloud Speech-to-Text Configuration
+# Choose ONE of the following authentication methods:
+
+# METHOD 1: Service Account JSON File Path (Recommended for development)
+# Download your service account JSON file and place it in the credentials folder
+GOOGLE_APPLICATION_CREDENTIALS=./credentials/google-cloud-key.json
+
+# METHOD 2: Service Account JSON Content (Good for deployment)
+# Paste your entire JSON file content here (uncomment and use instead of file path)
+# GOOGLE_APPLICATION_CREDENTIALS_JSON={"type":"service_account","project_id":"your-project",...}
+
+# METHOD 3: Individual credential fields (Alternative for deployment)
+# GOOGLE_CLIENT_EMAIL=your-service-account@your-project.iam.gserviceaccount.com
+# GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYour private key here\n-----END PRIVATE KEY-----\n"
+# GOOGLE_PROJECT_ID=your-project-id
+
+# Server Configuration
+PORT=5000
+NODE_ENV=development
+
+# Optional: Enable detailed logging
+DEBUG_SPEECH=false

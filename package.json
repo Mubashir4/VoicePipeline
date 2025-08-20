@@ -6,7 +6,9 @@
     "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
     "backend": "cd backend && npm run dev",
     "frontend": "cd frontend && npm start",
-    "install-all": "npm install && cd backend && npm install && cd ../frontend && npm install"
+    "install-all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "setup-credentials": "node setup-credentials.js",
+    "test-credentials": "cd backend && node -e \"require('dotenv').config(); const speech = require('@google-cloud/speech'); new speech.SpeechClient(); console.log('✅ Credentials working!');\""
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

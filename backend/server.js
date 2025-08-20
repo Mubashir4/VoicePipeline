@@ -3,6 +3,8 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const speech = require('@google-cloud/speech');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -17,8 +19,61 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// Initialize Google Cloud Speech client
-const speechClient = new speech.SpeechClient();
+// Initialize Google Cloud Speech client with flexible authentication
+function initializeSpeechClient() {
+  try {
+    let clientConfig = {};
+
+    // Method 1: JSON file path (most common)
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      const credentialsPath = path.resolve(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+      if (fs.existsSync(credentialsPath)) {
+        console.log('✅ Using credentials file:', credentialsPath);
+        clientConfig.keyFilename = credentialsPath;
+      } else {
+        console.error('❌ Credentials file not found:', credentialsPath);
+        throw new Error(`Credentials file not found: ${credentialsPath}`);
+      }
+    }
+    // Method 2: JSON content as environment variable
+    else if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+      console.log('✅ Using credentials from JSON environment variable');
+      const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+      clientConfig.credentials = credentials;
+      clientConfig.projectId = credentials.project_id;
+    }
+    // Method 3: Individual credential fields
+    else if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY && process.env.GOOGLE_PROJECT_ID) {
+      console.log('✅ Using individual credential fields');
+      clientConfig.credentials = {
+        client_email: process.env.GOOGLE_CLIENT_EMAIL,
+        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      };
+      clientConfig.projectId = process.env.GOOGLE_PROJECT_ID;
+    }
+    // Method 4: Try default credentials (gcloud auth)
+    else {
+      console.log('⚠️  No explicit credentials found, trying default credentials...');
+      console.log('   Make sure you have run: gcloud auth application-default login');
+    }
+
+    const speechClient = new speech.SpeechClient(clientConfig);
+    console.log('✅ Google Cloud Speech client initialized successfully');
+    return speechClient;
+
+  } catch (error) {
+    console.error('❌ Failed to initialize Google Cloud Speech client:', error.message);
+    console.error('\n📋 Setup Instructions:');
+    console.error('1. Download your service account JSON file from Google Cloud Console');
+    console.error('2. Place it in backend/credentials/google-cloud-key.json');
+    console.error('3. Or set GOOGLE_APPLICATION_CREDENTIALS_JSON in your .env file');
+    console.error('4. Or run: gcloud auth application-default login');
+    console.error('5. See backend/env-template.txt for all configuration options\n');
+    throw error;
+  }
+}
+
+const speechClient = initializeSpeechClient();
 
 // Store active recognition streams
 const activeStreams = new Map();
