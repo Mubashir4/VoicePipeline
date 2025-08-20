@@ -1,6 +1,18 @@
 
+# Dependencies
+node_modules/
+
 # Google Cloud Credentials
 backend/.env
 backend/credentials/
-*.json
+# Only exclude Google Cloud service account JSON files, not package.json
+backend/credentials/*.json
+
+# Build outputs
+build/
+dist/
+
+# Logs
+*.log
+
 FIXES_APPLIED.md
