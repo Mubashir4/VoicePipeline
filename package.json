@@ -1,0 +1,16 @@
+{
+  "name": "voice-pipeline-test",
+  "version": "1.0.0",
+  "description": "Test project for Google Cloud Speech-to-Text v1 streaming with speaker diarization",
+  "scripts": {
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm start",
+    "install-all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "setup-credentials": "node setup-credentials.js",
+    "test-credentials": "cd backend && node -e \"require('dotenv').config(); const speech = require('@google-cloud/speech'); new speech.SpeechClient(); console.log('✅ Credentials working!');\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
