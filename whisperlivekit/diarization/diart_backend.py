@@ -5,6 +5,7 @@ import numpy as np
 import logging
 import time
 from queue import SimpleQueue, Empty
+from typing import Tuple, Any, List
 
 from diart import SpeakerDiarization, SpeakerDiarizationConfig
 from diart.inference import StreamingInference
@@ -12,7 +13,6 @@ from diart.sources import AudioSource
 from whisperlivekit.timed_objects import SpeakerSegment
 from diart.sources import MicrophoneAudioSource
 from rx.core import Observer
-from typing import Tuple, Any, List
 from pyannote.core import Annotation
 import diart.models as m
 
@@ -227,23 +227,398 @@ class DiartDiarization:
         segments = self.observer.get_segments()
         
         # Debug logging
-        logger.debug(f"assign_speakers_to_tokens called with {len(tokens)} tokens")
-        logger.debug(f"Available segments: {len(segments)}")
+        logger.info(f"assign_speakers_to_tokens called with {len(tokens)} tokens")
+        logger.info(f"Available segments: {len(segments)}")
         for i, seg in enumerate(segments[:5]):  # Show first 5 segments
-            logger.debug(f"  Segment {i}: {seg.speaker} [{seg.start:.2f}-{seg.end:.2f}]")
+            logger.info(f"  Segment {i}: {seg.speaker} [{seg.start:.2f}-{seg.end:.2f}]")
         
         if not self.lag_diart and segments and tokens:
             self.lag_diart = segments[0].start - tokens[0].start
-        
+
         if not use_punctuation_split:
+            # Step 1: continuously refine lag estimate using EMA when confident
+            self._update_lag_ema(tokens, segments)
+
+            # Step 2: group tokens into utterances by punctuation and inter-token gap
+            utterances = self._group_tokens_into_utterances(tokens)
+
+            # Step 3: assign a single speaker per utterance using majority overlap
+            self._assign_utterances_by_overlap(tokens, utterances, segments)
+
+            # Step 4: minimal cleanup of obvious single-token errors
+            self._fix_short_segments(tokens)
+
+            # Log final assignments
             for token in tokens:
-                for segment in segments:
-                    if not (segment.end <= token.start + self.lag_diart or segment.start >= token.end + self.lag_diart):
-                        token.speaker = extract_number(segment.speaker) + 1
+                logger.info(f"Final assignment: '{token.text}' [{token.start:.2f}-{token.end:.2f}] -> Speaker {token.speaker}")
         else:
             tokens = add_speaker_to_tokens(segments, tokens)
         return tokens
+
+    def _update_lag_ema(self, tokens, segments, alpha: float = 0.12, min_overlap_ratio: float = 0.5):
+        """
+        Update diarization lag using an exponential moving average based on
+        tokens that confidently overlap a single diarization segment.
+        """
+        if not tokens or not segments:
+            return
+        current_lag = self.lag_diart or 0.0
+        updates = 0
+        for token in tokens:
+            token_start = token.start + current_lag
+            token_end = token.end + current_lag
+            token_dur = max(1e-6, token_end - token_start)
+
+            best_seg = None
+            best_overlap = 0.0
+            second_overlap = 0.0
+            for seg in segments:
+                overlap_start = max(seg.start, token_start)
+                overlap_end = min(seg.end, token_end)
+                overlap = max(0.0, overlap_end - overlap_start)
+                if overlap > best_overlap:
+                    second_overlap = best_overlap
+                    best_overlap = overlap
+                    best_seg = seg
+                elif overlap > second_overlap:
+                    second_overlap = overlap
+
+            if best_seg is None:
+                continue
+
+            # Require clean dominance to avoid noisy updates
+            if best_overlap / token_dur >= min_overlap_ratio and best_overlap > second_overlap * 1.5:
+                token_mid = (token.start + token.end) / 2.0
+                seg_mid = (best_seg.start + best_seg.end) / 2.0
+                delta = seg_mid - token_mid
+                current_lag = (1 - alpha) * current_lag + alpha * delta
+                updates += 1
+
+        if updates > 0:
+            self.lag_diart = current_lag
+
+    def _group_tokens_into_utterances(self, tokens, max_gap: float = 0.35):
+        """
+        Group tokens into utterances using punctuation boundaries and time gaps.
+        Returns a list of (start_index, end_index) inclusive utterance spans.
+        """
+        if not tokens:
+            return []
+        punctuation_marks = {'.', '!', '?'}
+        utterances = []
+        start_idx = 0
+        last_end = tokens[0].end
+        for i in range(1, len(tokens)):
+            gap = tokens[i].start - last_end
+            last_end = tokens[i].end
+            is_boundary = tokens[i-1].text.strip() in punctuation_marks or gap > max_gap
+            if is_boundary:
+                utterances.append((start_idx, i - 1))
+                start_idx = i
+        utterances.append((start_idx, len(tokens) - 1))
+        return utterances
+
+    def _assign_utterances_by_overlap(self, tokens, utterances, segments,
+                                      hysteresis_margin: float = 0.2):
+        """
+        Assign a single speaker per utterance using simple timing overlap.
+        No embeddings - just pure timing-based assignment.
+        """
+        if not segments or not tokens or not utterances:
+            return
+        prev_speaker = None
+        lag = self.lag_diart or 0.0
+
+        for (s_idx, e_idx) in utterances:
+            # Calculate timing-based overlaps for all speakers
+            speaker_to_overlap = {}
+            
+            for i in range(s_idx, e_idx + 1):
+                t = tokens[i]
+                t_start = t.start + lag
+                t_end = t.end + lag
+                
+                for seg in segments:
+                    overlap_start = max(seg.start, t_start)
+                    overlap_end = min(seg.end, t_end)
+                    overlap = max(0, overlap_end - overlap_start)
+                    
+                    if overlap > 0:
+                        speaker_id = extract_number(seg.speaker)
+                        speaker_to_overlap[speaker_id] = speaker_to_overlap.get(speaker_id, 0) + overlap
+            
+            if speaker_to_overlap:
+                # Find speaker with maximum overlap
+                best_speaker_id = max(speaker_to_overlap.items(), key=lambda x: x[1])[0]
+                chosen = best_speaker_id + 1  # Convert to 1-based indexing
+            else:
+                # Fallback: keep previous speaker if any, else default to 1
+                chosen = prev_speaker or 1
+
+            # Assign speaker to all tokens in this utterance
+            for i in range(s_idx, e_idx + 1):
+                tokens[i].speaker = chosen
+                logger.info(f"Assigned utterance token '{tokens[i].text}' [{tokens[i].start:.2f}-{tokens[i].end:.2f}] to consistent Speaker {chosen}")
+            
+            prev_speaker = chosen
+    
+    def _fix_short_segments(self, tokens):
+        """
+        Fix only very short speaker segments that are likely errors.
+        Much more conservative than full smoothing.
+        """
+        if len(tokens) < 3:
+            return
         
+        # Only fix segments that are 1 token long and surrounded by same speaker
+        i = 1
+        while i < len(tokens) - 1:
+            current_speaker = tokens[i].speaker
+            prev_speaker = tokens[i-1].speaker
+            next_speaker = tokens[i+1].speaker
+            
+            # If this is a single token surrounded by the same speaker, merge it
+            if (prev_speaker == next_speaker and 
+                current_speaker != prev_speaker and
+                tokens[i].end - tokens[i].start < 0.2):  # Very short token
+                
+                tokens[i].speaker = prev_speaker
+                logger.info(f"Fixed short segment: '{tokens[i].text}' changed from Speaker {current_speaker} to Speaker {prev_speaker}")
+            
+            i += 1
+    
+    def _smooth_speaker_assignments(self, tokens):
+        """
+        Smooth speaker assignments to prevent word splitting and improve coherence.
+        Groups consecutive tokens that should belong to the same speaker.
+        """
+        if len(tokens) < 2:
+            return
+        
+        # Parameters for smoothing - made more conservative
+        MIN_SPEAKER_DURATION = 0.2  # Minimum duration for a speaker segment (reduced)
+        MAX_GAP_WITHIN_SPEAKER = 0.1  # Maximum gap to consider same speaker (reduced)
+        
+        # Group tokens into potential speaker segments
+        current_speaker = tokens[0].speaker
+        current_start_idx = 0
+        
+        i = 1
+        while i < len(tokens):
+            # Check if we should continue with current speaker or switch
+            should_switch = False
+            
+            # If speaker changes, check if it's a real change or noise
+            if tokens[i].speaker != current_speaker:
+                # Calculate duration of current speaker segment
+                current_duration = tokens[i-1].end - tokens[current_start_idx].start
+                
+                # If current segment is very short, extend it
+                if current_duration < MIN_SPEAKER_DURATION:
+                    tokens[i].speaker = current_speaker
+                else:
+                    # Check gap between previous token and current token
+                    gap = tokens[i].start - tokens[i-1].end
+                    
+                    # If gap is small, might be same speaker
+                    if gap < MAX_GAP_WITHIN_SPEAKER:
+                        # Look ahead to see if next few tokens have same speaker
+                        lookahead_speaker = tokens[i].speaker
+                        lookahead_count = 0
+                        j = i
+                        while j < len(tokens) and j < i + 3:  # Look ahead 3 tokens
+                            if tokens[j].speaker == lookahead_speaker:
+                                lookahead_count += 1
+                            j += 1
+                        
+                        # If lookahead shows consistent speaker, switch
+                        if lookahead_count >= 2:
+                            should_switch = True
+                        else:
+                            # Keep current speaker
+                            tokens[i].speaker = current_speaker
+                    else:
+                        should_switch = True
+            
+            if should_switch:
+                current_speaker = tokens[i].speaker
+                current_start_idx = i
+            
+            i += 1
+        
+        # Final pass: merge very short speaker segments
+        self._merge_short_segments(tokens)
+    
+    def _merge_short_segments(self, tokens):
+        """
+        Merge speaker segments that are too short to be meaningful.
+        """
+        if len(tokens) < 3:
+            return
+        
+        MIN_SEGMENT_TOKENS = 2  # Minimum tokens per speaker segment
+        
+        i = 0
+        while i < len(tokens):
+            current_speaker = tokens[i].speaker
+            segment_start = i
+            
+            # Find end of current speaker segment
+            while i < len(tokens) and tokens[i].speaker == current_speaker:
+                i += 1
+            
+            segment_length = i - segment_start
+            
+            # If segment is too short, merge with adjacent segment
+            if segment_length < MIN_SEGMENT_TOKENS:
+                # Decide which adjacent segment to merge with
+                merge_with_previous = False
+                merge_with_next = False
+                
+                if segment_start > 0:  # Has previous segment
+                    merge_with_previous = True
+                elif i < len(tokens):  # Has next segment
+                    merge_with_next = True
+                
+                if merge_with_previous:
+                    # Merge with previous segment
+                    target_speaker = tokens[segment_start - 1].speaker
+                    for j in range(segment_start, i):
+                        tokens[j].speaker = target_speaker
+                elif merge_with_next:
+                    # Merge with next segment
+                    target_speaker = tokens[i].speaker if i < len(tokens) else current_speaker
+                    for j in range(segment_start, i):
+                        tokens[j].speaker = target_speaker
+        
+
+    
+    def find_consistent_speaker_id(self, embedding: np.ndarray, original_speaker_id: str) -> int:
+        """
+        Find the consistent speaker ID for a given embedding using clustering with dynamic detection.
+        """
+        # Track this speaker as seen
+        self.known_speakers.add(original_speaker_id)
+        
+        if embedding is None:
+            # Fallback without embedding - check if we've seen this speaker before
+            if original_speaker_id in self.speaker_id_map:
+                return self.speaker_id_map[original_speaker_id]
+            else:
+                # New speaker without embedding - assign new ID
+                new_speaker_id = self.next_speaker_id
+                self.next_speaker_id += 1
+                self.speaker_id_map[original_speaker_id] = new_speaker_id
+                logger.info(f"Created new Speaker {new_speaker_id} for {original_speaker_id} (no embedding)")
+                return new_speaker_id
+        
+        # If we already have a mapping for this original speaker, use it
+        if original_speaker_id in self.speaker_id_map:
+            consistent_id = self.speaker_id_map[original_speaker_id]
+            # Add this embedding to the speaker's profile
+            self.speaker_embeddings[consistent_id].append(embedding)
+            return consistent_id
+        
+        # Find the best matching existing speaker using cosine similarity
+        best_match_id = None
+        best_similarity = 0.0
+        similarity_threshold = 0.70  # Slightly lower threshold for better detection
+        
+        for speaker_id, embeddings in self.speaker_embeddings.items():
+            if embeddings:
+                # Calculate average embedding for this speaker
+                avg_embedding = np.mean(embeddings, axis=0)
+                similarity = cosine_similarity([embedding], [avg_embedding])[0][0]
+                
+                if similarity > best_similarity and similarity > similarity_threshold:
+                    best_similarity = similarity
+                    best_match_id = speaker_id
+        
+        if best_match_id is not None:
+            # Found a matching speaker
+            self.speaker_id_map[original_speaker_id] = best_match_id
+            self.speaker_embeddings[best_match_id].append(embedding)
+            logger.info(f"Mapped {original_speaker_id} to existing Speaker {best_match_id} (similarity: {best_similarity:.3f})")
+            return best_match_id
+        else:
+            # Create a new speaker ID - this handles late-joining speakers
+            new_speaker_id = self.next_speaker_id
+            self.next_speaker_id += 1
+            self.speaker_id_map[original_speaker_id] = new_speaker_id
+            self.speaker_embeddings[new_speaker_id].append(embedding)
+            
+            # Check if this is a late-joining speaker
+            if len(self.known_speakers) > 2:
+                logger.info(f"🎯 LATE-JOINING SPEAKER DETECTED: Created Speaker {new_speaker_id} for {original_speaker_id}")
+            else:
+                logger.info(f"Created new Speaker {new_speaker_id} for {original_speaker_id}")
+            
+            return new_speaker_id
+    
+    def update_audio_buffer(self, audio_chunk: np.ndarray):
+        """
+        Update the audio buffer with new audio data and track timing.
+        """
+        if audio_chunk is not None:
+            # If buffer is empty, set start time
+            if len(self.audio_buffer) == 0:
+                import time
+                self.audio_buffer_start_time = time.time()
+            
+            # Add new audio to buffer
+            self.audio_buffer.extend(audio_chunk.flatten())
+            
+            # Update start time if buffer was rotated (maxlen exceeded)
+            if len(self.audio_buffer) == self.audio_buffer.maxlen:
+                # Buffer is full, calculate new start time
+                buffer_duration = len(self.audio_buffer) / self.sample_rate
+                current_time = time.time()
+                self.audio_buffer_start_time = current_time - buffer_duration
+    
+    def get_audio_segment(self, start_time: float, end_time: float) -> np.ndarray:
+        """
+        Extract audio segment from buffer based on timing.
+        """
+        try:
+            if len(self.audio_buffer) == 0:
+                logger.warning(f"Audio buffer is empty for segment [{start_time:.2f}-{end_time:.2f}]")
+                return None
+            
+            # Calculate current time and buffer duration
+            import time
+            current_time = time.time()
+            buffer_duration = len(self.audio_buffer) / self.sample_rate
+            buffer_end_time = current_time
+            buffer_start_time = buffer_end_time - buffer_duration
+            
+            # Check if requested segment is within buffer timeframe
+            if end_time < buffer_start_time or start_time > buffer_end_time:
+                logger.warning(f"Audio segment [{start_time:.2f}-{end_time:.2f}] outside buffer range [{buffer_start_time:.2f}-{buffer_end_time:.2f}]")
+                return None
+            
+            # Calculate relative positions in buffer
+            relative_start = max(0, start_time - buffer_start_time)
+            relative_end = min(buffer_duration, end_time - buffer_start_time)
+            
+            # Convert to sample indices
+            start_sample = int(relative_start * self.sample_rate)
+            end_sample = int(relative_end * self.sample_rate)
+            
+            # Convert buffer to numpy array and extract segment
+            audio_array = np.array(list(self.audio_buffer))
+            
+            if start_sample >= 0 and end_sample <= len(audio_array) and start_sample < end_sample:
+                segment = audio_array[start_sample:end_sample]
+                logger.info(f"Successfully extracted audio segment [{start_time:.2f}-{end_time:.2f}] from buffer")
+                return segment
+            else:
+                logger.warning(f"Invalid sample range [{start_sample}-{end_sample}] for buffer size {len(audio_array)}")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"Failed to extract audio segment: {e}")
+            return None
+
 def concatenate_speakers(segments):
     segments_concatenated = [{"speaker": 1, "begin": 0.0, "end": 0.0}]
     for segment in segments:

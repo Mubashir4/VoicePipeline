@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Audio Capture Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        input[type="url"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .primary {
+            background: #007bff;
+            color: white;
+        }
+        
+        .success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .danger {
+            background: #dc3545;
+            color: white;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        button:hover:not(:disabled) {
+            transform: translateY(-1px);
+        }
+        
+        .video-container {
+            margin: 20px 0;
+            text-align: center;
+        }
+        
+        .video-container iframe {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+            font-weight: 500;
+        }
+        
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .instructions {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+        
+        .instructions h3 {
+            margin-top: 0;
+            color: #856404;
+        }
+        
+        .instructions ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        
+        .instructions li {
+            margin: 8px 0;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 YouTube Audio Capture Test</h1>
+        
+        <div class="instructions">
+            <h3>📋 How to Use:</h3>
+            <ol>
+                <li>Paste a YouTube URL below</li>
+                <li>Click "Load Video" to embed it</li>
+                <li>Click "Start Capture" and allow screen sharing</li>
+                <li>Select the browser tab with the YouTube video</li>
+                <li>Audio will be captured and sent to WhisperLiveKit</li>
+            </ol>
+            <p><strong>⚠️ Note:</strong> Your browser will ask for screen sharing permission. This is normal and required to capture the YouTube audio.</p>
+        </div>
+        
+        <div class="input-group">
+            <label for="youtubeUrl">YouTube Video URL:</label>
+            <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ" />
+        </div>
+        
+        <div class="button-group">
+            <button id="loadBtn" class="primary">Load Video</button>
+            <button id="captureBtn" class="success" disabled>Start Capture</button>
+            <button id="stopBtn" class="danger" disabled>Stop Capture</button>
+        </div>
+        
+        <div id="status" class="status info">Enter a YouTube URL to get started</div>
+        
+        <div id="videoContainer" class="video-container" style="display: none;"></div>
+        
+        <div id="transcription" style="margin-top: 20px;"></div>
+    </div>
+
+    <script>
+        // DOM elements
+        const youtubeUrl = document.getElementById('youtubeUrl');
+        const loadBtn = document.getElementById('loadBtn');
+        const captureBtn = document.getElementById('captureBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const videoContainer = document.getElementById('videoContainer');
+        const transcription = document.getElementById('transcription');
+        
+        // State
+        let isCapturing = false;
+        let mediaRecorder = null;
+        let websocket = null;
+        let audioContext = null;
+        let mediaSource = null;
+        
+        // Utility functions
+        function updateStatus(message, type = 'info') {
+            status.textContent = message;
+            status.className = `status ${type}`;
+        }
+        
+        function extractVideoId(url) {
+            const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
+            const match = url.match(regex);
+            return match ? match[1] : null;
+        }
+        
+        // Load YouTube video
+        function loadVideo() {
+            const url = youtubeUrl.value.trim();
+            if (!url) {
+                updateStatus('Please enter a YouTube URL', 'error');
+                return;
+            }
+            
+            const videoId = extractVideoId(url);
+            if (!videoId) {
+                updateStatus('Invalid YouTube URL. Please check and try again.', 'error');
+                return;
+            }
+            
+            updateStatus('Loading video...', 'info');
+            
+            // Create iframe
+            const iframe = document.createElement('iframe');
+            iframe.width = '560';
+            iframe.height = '315';
+            iframe.src = `https://www.youtube.com/embed/${videoId}?enablejsapi=1`;
+            iframe.frameBorder = '0';
+            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+            iframe.allowFullscreen = true;
+            
+            videoContainer.innerHTML = '';
+            videoContainer.appendChild(iframe);
+            videoContainer.style.display = 'block';
+            
+            updateStatus('✅ Video loaded! Click "Start Capture" to begin audio capture.', 'success');
+            captureBtn.disabled = false;
+        }
+        
+        // Start audio capture
+        async function startCapture() {
+            try {
+                updateStatus('Requesting screen share permission...', 'info');
+                
+                // Request screen capture
+                const stream = await navigator.mediaDevices.getDisplayMedia({
+                    video: true,
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                        sampleRate: 16000
+                    }
+                });
+                
+                updateStatus('✅ Screen capture started! Setting up audio processing...', 'success');
+                
+                // Create audio context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000
+                });
+                
+                // Create media source
+                mediaSource = audioContext.createMediaStreamSource(stream);
+                
+                // Create destination
+                const destination = audioContext.createMediaStreamDestination();
+                mediaSource.connect(destination);
+                
+                // Setup WebSocket
+                await setupWebSocket();
+                
+                // Create MediaRecorder
+                let mimeType = "audio/webm";
+                if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+                    mimeType = "audio/webm;codecs=opus";
+                } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+                    mimeType = "audio/mp4";
+                } else if (MediaRecorder.isTypeSupported("audio/wav")) {
+                    mimeType = "audio/wav";
+                }
+                
+                mediaRecorder = new MediaRecorder(destination.stream, { mimeType });
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        websocket.send(event.data);
+                    }
+                };
+                
+                mediaRecorder.start(100); // 100ms chunks
+                isCapturing = true;
+                
+                updateStatus('🎤 Capturing audio! Transcription will appear below...', 'success');
+                captureBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+                // Handle stream end
+                stream.getVideoTracks()[0].onended = () => {
+                    if (isCapturing) {
+                        stopCapture();
+                        updateStatus('Screen sharing stopped by user', 'info');
+                    }
+                };
+                
+            } catch (error) {
+                console.error('Capture error:', error);
+                updateStatus(`Error: ${error.message}`, 'error');
+                
+                // Reset state
+                isCapturing = false;
+                captureBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        }
+        
+        // Setup WebSocket connection
+        function setupWebSocket() {
+            return new Promise((resolve, reject) => {
+                const wsUrl = 'ws://localhost:8000/asr';
+                websocket = new WebSocket(wsUrl);
+                
+                websocket.onopen = () => {
+                    console.log('WebSocket connected');
+                    resolve();
+                };
+                
+                websocket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    displayTranscription(data);
+                };
+                
+                websocket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    reject(new Error('WebSocket connection failed'));
+                };
+                
+                websocket.onclose = () => {
+                    console.log('WebSocket closed');
+                    if (isCapturing) {
+                        updateStatus('Connection lost. Please restart capture.', 'error');
+                        stopCapture();
+                    }
+                };
+            });
+        }
+        
+        // Display transcription
+        function displayTranscription(data) {
+            if (data.type === "ready_to_stop") {
+                updateStatus('✅ Transcription completed!', 'success');
+                return;
+            }
+            
+            const { lines = [], buffer_transcription = "", buffer_diarization = "" } = data;
+            
+            let html = '';
+            lines.forEach(line => {
+                if (line.text && line.text.trim()) {
+                    const speaker = line.speaker > 0 ? `Speaker ${line.speaker}` : 'Processing...';
+                    const timeInfo = line.beg !== undefined && line.end !== undefined ? 
+                        ` (${line.beg} - ${line.end})` : '';
+                    
+                    html += `
+                        <div style="margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                            <strong style="color: #007bff;">${speaker}${timeInfo}:</strong><br>
+                            <span style="margin-left: 10px;">${line.text}</span>
+                        </div>
+                    `;
+                }
+            });
+            
+            // Add buffers
+            if (buffer_diarization) {
+                html += `<div style="color: #6c757d; font-style: italic;">Diarization: ${buffer_diarization}</div>`;
+            }
+            if (buffer_transcription) {
+                html += `<div style="color: #6c757d; font-style: italic;">Transcription: ${buffer_transcription}</div>`;
+            }
+            
+            transcription.innerHTML = html;
+            
+            // Auto-scroll
+            transcription.scrollTop = transcription.scrollHeight;
+        }
+        
+        // Stop capture
+        function stopCapture() {
+            isCapturing = false;
+            
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                const emptyBlob = new Blob([], { type: "audio/webm" });
+                websocket.send(emptyBlob);
+            }
+            
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+                mediaRecorder = null;
+            }
+            
+            if (mediaSource) {
+                mediaSource.disconnect();
+                mediaSource = null;
+            }
+            
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            updateStatus('Audio capture stopped. Video remains loaded for restart.', 'info');
+            captureBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+        
+        // Event listeners
+        loadBtn.addEventListener('click', loadVideo);
+        captureBtn.addEventListener('click', startCapture);
+        stopBtn.addEventListener('click', stopCapture);
+        
+        youtubeUrl.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                loadVideo();
+            }
+        });
+        
+        // Add a test URL for convenience
+        youtubeUrl.value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+        
+        console.log('🎬 YouTube Audio Capture Test loaded successfully!');
+    </script>
+</body>
+</html>

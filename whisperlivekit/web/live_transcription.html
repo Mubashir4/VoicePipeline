@@ -3,31 +3,128 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WhisperLiveKit</title>
-  <link rel="stylesheet" href="/web/live_transcription.css" />
+  <title>VoicePipeline - Real-time Speech Transcription</title>
+  <link rel="stylesheet" href="/web/live_transcription.css?v=4.0" />
 </head>
 <body>
-  <div class="settings-container">
-    <button id="recordButton">
-      <div class="shape-container">
-        <div class="shape"></div>
-      </div>
-      <div class="recording-info">
-        <div class="wave-container">
-          <canvas id="waveCanvas"></canvas>
+  <div class="app-container">
+    <div class="app-header">
+      <h1 class="app-title">VoicePipeline</h1>
+      <p class="app-subtitle">Professional real-time speech transcription platform</p>
+    </div>
+
+    <div class="settings-container">
+    <!-- Mode Selection -->
+    <div class="mode-selector">
+      <button id="liveMode" class="mode-btn active">Live Recording</button>
+      <button id="uploadMode" class="mode-btn">Upload Audio File</button>
+      <button id="youtubeMode" class="mode-btn">🎬 YouTube Capture</button>
+    </div>
+
+    <!-- Live Recording Section -->
+    <div id="liveSection" class="mode-section active">
+      <button id="recordButton">
+        <div class="shape-container">
+          <div class="shape"></div>
         </div>
-        <div class="timer">00:00</div>
-      </div>
-    </button>
+        <div class="recording-info">
+          <div class="wave-container">
+            <canvas id="waveCanvas"></canvas>
+          </div>
+          <div class="timer">00:00</div>
+        </div>
+      </button>
 
-    <div class="settings">
-      <div class="field">
-        <label for="websocketInput">WebSocket URL</label>
-        <input id="websocketInput" type="text" placeholder="ws://host:port/asr" />
-      </div>
-
+      <div class="settings">
+        <div class="field">
+          <label for="websocketInput">WebSocket URL</label>
+          <input id="websocketInput" type="text" placeholder="ws://host:port/asr" />
+        </div>
       </div>
     </div>
+
+    <!-- File Upload Section -->
+    <div id="uploadSection" class="mode-section">
+      <div class="upload-options">
+        <div class="upload-mode-selector">
+          <label>
+            <input type="radio" name="uploadMode" value="batch" checked>
+            <span>Batch Processing (faster)</span>
+          </label>
+          <label>
+            <input type="radio" name="uploadMode" value="stream">
+            <span>Real-time Streaming</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="upload-area" id="uploadArea">
+        <div class="upload-content">
+          <div class="upload-icon">📁</div>
+          <h3>Upload Audio File</h3>
+          <p>Drag and drop your audio file here, or click to browse</p>
+          <p class="supported-formats">Supported: WAV, MP3, M4A, OGG, FLAC, WebM</p>
+          <p id="uploadModeDescription" class="upload-mode-desc">Batch mode: Process entire file at once (recommended)</p>
+          <input type="file" id="audioFileInput" accept="audio/*" hidden>
+          <button id="browseButton" class="browse-btn">Browse Files</button>
+        </div>
+      </div>
+      
+      <div id="uploadProgress" class="upload-progress hidden">
+        <div class="progress-bar">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div id="progressText" class="progress-text">Uploading...</div>
+      </div>
+
+      <div id="fileInfo" class="file-info hidden">
+        <h4>File Information</h4>
+        <div id="fileDetails"></div>
+      </div>
+    </div>
+
+    <!-- YouTube Capture Section -->
+    <div id="youtubeSection" class="mode-section">
+      <div class="youtube-container">
+        <div class="youtube-input-section">
+          <div class="field">
+            <label for="youtubeUrl">YouTube Video URL</label>
+            <input type="url" id="youtubeUrl" placeholder="https://www.youtube.com/watch?v=..." />
+          </div>
+          <div class="youtube-controls">
+            <button id="loadYouTubeBtn" class="youtube-btn">Load Video</button>
+            <button id="captureYouTubeBtn" class="youtube-btn" disabled>Start Audio Capture</button>
+            <button id="stopYouTubeBtn" class="youtube-btn" disabled>Stop Capture</button>
+          </div>
+        </div>
+        
+        <div id="youtubePlayer" class="youtube-player hidden"></div>
+        
+        <div class="youtube-info">
+          <div id="youtubeStatus" class="status-text">Enter a YouTube URL to get started</div>
+          <div id="youtubeDetails" class="youtube-details hidden"></div>
+        </div>
+        
+        <div class="youtube-instructions">
+          <h4>📋 Instructions:</h4>
+          <ol>
+            <li>Paste a YouTube video URL above</li>
+            <li>Click "Load Video" to embed the video</li>
+            <li>Click "Start Audio Capture" to begin transcribing the video's audio</li>
+            <li>The transcription will appear in real-time below</li>
+          </ol>
+          <p class="note">⚠️ <strong>Note:</strong> This captures the video's audio directly without using your microphone.</p>
+        </div>
+      </div>
+    </div>
+
+    <p id="status"></p>
+
+    <div id="linesTranscript"></div>
+    
+    <footer class="app-footer">
+      <p class="footer-credit">Powered by <a href="https://github.com/collabora/WhisperLive" target="_blank" rel="noopener noreferrer">WhisperLiveKit</a></p>
+    </footer>
   </div>
 
   <div class="theme-selector-container">
@@ -52,10 +149,6 @@
     </div>
   </div>
 
-  <p id="status"></p>
-
-  <div id="linesTranscript"></div>
-
-  <script src="/web/live_transcription.js"></script>
+  <script src="/web/live_transcription.js?v=4.0"></script>
 </body>
 </html>
