@@ -381,9 +381,9 @@ async function startRecording() {
       audio: {
         sampleRate: 16000,
         channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
       } 
     });
 

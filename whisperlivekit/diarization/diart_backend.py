@@ -224,6 +224,8 @@ class DiartDiarization:
         
         If use_punctuation_split is True, uses punctuation marks to refine speaker boundaries.
         """
+        # Periodically clear old segments to avoid stale assignments and drift
+        self.observer.clear_old_segments(older_than=30.0)
         segments = self.observer.get_segments()
         
         # Debug logging
@@ -348,9 +350,22 @@ class DiartDiarization:
                         speaker_to_overlap[speaker_id] = speaker_to_overlap.get(speaker_id, 0) + overlap
             
             if speaker_to_overlap:
-                # Find speaker with maximum overlap
-                best_speaker_id = max(speaker_to_overlap.items(), key=lambda x: x[1])[0]
-                chosen = best_speaker_id + 1  # Convert to 1-based indexing
+                # Sort speakers by overlap
+                sorted_overlaps = sorted(speaker_to_overlap.items(), key=lambda x: x[1], reverse=True)
+                best_raw_id, best_overlap = sorted_overlaps[0]
+                second_overlap = sorted_overlaps[1][1] if len(sorted_overlaps) > 1 else 0.0
+
+                # Apply hysteresis with respect to previous speaker if available
+                prev_overlap = speaker_to_overlap.get(prev_speaker - 1, 0.0) if prev_speaker else 0.0
+
+                # Keep previous speaker if it is close to the best
+                if prev_speaker and prev_overlap >= best_overlap * (1 - hysteresis_margin):
+                    chosen = prev_speaker
+                # Or if best is not clearly dominant over second best
+                elif best_overlap < (second_overlap * (1 + hysteresis_margin)) and prev_speaker:
+                    chosen = prev_speaker
+                else:
+                    chosen = best_raw_id + 1  # Convert to 1-based indexing
             else:
                 # Fallback: keep previous speaker if any, else default to 1
                 chosen = prev_speaker or 1

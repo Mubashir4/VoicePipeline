@@ -75,7 +75,9 @@ class RobustSpeakerEmbeddingSystem:
                  similarity_threshold: float = 0.82,
                  min_segment_duration: float = 1.0,
                  sample_rate: int = 16000,
-                 enable_vad: bool = True):
+                 enable_vad: bool = True,
+                 min_update_confidence: float = 0.86,
+                 update_cooldown_seconds: float = 1.0):
         """
         Initialize the embedding system with optimal configuration.
         
@@ -90,6 +92,8 @@ class RobustSpeakerEmbeddingSystem:
         self.min_segment_duration = min_segment_duration
         self.sample_rate = sample_rate
         self.enable_vad = enable_vad
+        self.min_update_confidence = min_update_confidence
+        self.update_cooldown_seconds = update_cooldown_seconds
         
         # Speaker database for consistent identification
         self.speaker_embeddings: Dict[str, List[np.ndarray]] = defaultdict(list)
@@ -564,7 +568,8 @@ class RobustSpeakerEmbeddingSystem:
             "last_updated": time.time(),
             "embedding_count": 1,
             "model_type": self.model_type,
-            "total_identifications": 0
+            "total_identifications": 0,
+            "last_update_time": 0.0
         }
         
         self.stats["new_speakers_created"] += 1
@@ -611,8 +616,9 @@ class RobustSpeakerEmbeddingSystem:
         speaker_id, confidence = self.find_best_matching_speaker(embedding, segment_duration)
         
         if speaker_id:
-            # Dynamic embedding update: Add new embedding to existing speaker
-            self._update_speaker_embeddings(speaker_id, embedding, segment_duration)
+            # Dynamic embedding update with gating to prevent drift
+            if self._should_update_embeddings(speaker_id, embedding, confidence, segment_duration):
+                self._update_speaker_embeddings(speaker_id, embedding, segment_duration)
             self.speaker_metadata[speaker_id]["last_updated"] = time.time()
             self.speaker_metadata[speaker_id]["total_identifications"] += 1
             self.stats["existing_speakers_matched"] += 1
@@ -670,6 +676,40 @@ class RobustSpeakerEmbeddingSystem:
         # Update metadata
         metadata["last_segment_duration"] = segment_duration
         metadata["total_duration"] = metadata.get("total_duration", 0.0) + segment_duration
+        metadata["last_update_time"] = time.time()
+
+    def _should_update_embeddings(self, speaker_id: str, new_embedding: np.ndarray, 
+                                  confidence: float, segment_duration: float) -> bool:
+        """
+        Decide whether to add a new embedding to a speaker profile to prevent drift.
+        Conditions:
+        - Confidence must exceed a stricter threshold
+        - Respect a short cooldown to avoid rapid updates on unstable segments
+        - New embedding must be sufficiently similar to the current centroid
+        - Segment should be reasonably long
+        """
+        if new_embedding is None:
+            return False
+
+        if confidence < max(self.similarity_threshold + 0.03, self.min_update_confidence):
+            return False
+
+        if segment_duration is not None and segment_duration < 1.0:
+            return False
+
+        metadata = self.speaker_metadata.get(speaker_id, {})
+        last_update = metadata.get("last_update_time", 0.0)
+        if time.time() - last_update < self.update_cooldown_seconds:
+            return False
+
+        embeddings = self.speaker_embeddings.get(speaker_id, [])
+        if not embeddings:
+            return True
+
+        centroid = np.mean(np.stack(embeddings), axis=0)
+        centroid = centroid / (np.linalg.norm(centroid) + 1e-12)
+        sim_to_centroid = self.compute_similarity(new_embedding, centroid, "advanced")
+        return sim_to_centroid >= max(self.similarity_threshold, 0.80)
     
     def _update_extraction_stats(self, extraction_time: float):
         """Update extraction performance statistics."""
